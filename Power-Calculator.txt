@@ -1,0 +1,815 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace Power_Calculator
+{
+    public partial class Power_Calculator : Form
+    {
+        int n = 10;
+        int C = 100;
+        Double alpha = 0.05;
+        Double gamma = 0.80;
+        Double tau = 0.1;
+        Double sigma = 0.9;
+
+        public static double Gamma
+        ( // Code for closely approximating the gamma function without new libraries, coutesy of John D Cook
+          // available at: http://www.johndcook.com/Gamma.cs
+            double x    // We require x > 0
+        )
+        {
+            if (x <= 0.0)
+            {
+                string msg = string.Format("Invalid input argument {0}. Argument must be positive.", x);
+                throw new ArgumentOutOfRangeException(msg);
+            }
+
+            // Split the function domain into three intervals:
+            // (0, 0.001), [0.001, 12), and (12, infinity)
+
+            ///////////////////////////////////////////////////////////////////////////
+            // First interval: (0, 0.001)
+            //
+            // For small x, 1/Gamma(x) has power series x + gamma x^2  - ...
+            // So in this range, 1/Gamma(x) = x + gamma x^2 with error on the order of x^3.
+            // The relative error over this interval is less than 6e-7.
+
+            const double gamma = 0.577215664901532860606512090; // Euler's gamma constant
+
+            if (x < 0.001)
+                return 1.0 / (x * (1.0 + gamma * x));
+
+            ///////////////////////////////////////////////////////////////////////////
+            // Second interval: [0.001, 12)
+
+            if (x < 12.0)
+            {
+                // The algorithm directly approximates gamma over (1,2) and uses
+                // reduction identities to reduce other arguments to this interval.
+
+                double y = x;
+                int n = 0;
+                bool arg_was_less_than_one = (y < 1.0);
+
+                // Add or subtract integers as necessary to bring y into (1,2)
+                // Will correct for this below
+                if (arg_was_less_than_one)
+                {
+                    y += 1.0;
+                }
+                else
+                {
+                    n = (int)(Math.Floor(y)) - 1;  // will use n later
+                    y -= n;
+                }
+
+                // numerator coefficients for approximation over the interval (1,2)
+                double[] p =
+                {
+                    -1.71618513886549492533811E+0,
+                     2.47656508055759199108314E+1,
+                    -3.79804256470945635097577E+2,
+                     6.29331155312818442661052E+2,
+                     8.66966202790413211295064E+2,
+                    -3.14512729688483675254357E+4,
+                    -3.61444134186911729807069E+4,
+                     6.64561438202405440627855E+4
+                };
+
+                // denominator coefficients for approximation over the interval (1,2)
+                double[] q =
+                {
+                    -3.08402300119738975254353E+1,
+                     3.15350626979604161529144E+2,
+                    -1.01515636749021914166146E+3,
+                    -3.10777167157231109440444E+3,
+                     2.25381184209801510330112E+4,
+                     4.75584627752788110767815E+3,
+                    -1.34659959864969306392456E+5,
+                    -1.15132259675553483497211E+5
+                };
+
+                double num = 0.0;
+                double den = 1.0;
+                int i;
+
+                double z = y - 1;
+                for (i = 0; i < 8; i++)
+                {
+                    num = (num + p[i]) * z;
+                    den = den * z + q[i];
+                }
+                double result = num / den + 1.0;
+
+                // Apply correction if argument was not initially in (1,2)
+                if (arg_was_less_than_one)
+                {
+                    // Use identity gamma(z) = gamma(z+1)/z
+                    // The variable "result" now holds gamma of the original y + 1
+                    // Thus we use y-1 to get back the orginal y.
+                    result /= (y - 1.0);
+                }
+                else
+                {
+                    // Use the identity gamma(z+n) = z*(z+1)* ... *(z+n-1)*gamma(z)
+                    for (i = 0; i < n; i++)
+                        result *= y++;
+                }
+
+                return result;
+            }
+
+
+            ///////////////////////////////////////////////////////////////////////////
+            // Third interval: [12, infinity)
+
+            if (x > 171.624)
+            {
+                // Correct answer too large to display. 
+                return double.PositiveInfinity;
+            }
+
+            return Math.Exp(LogGamma(x));
+        }
+        public static double LogGamma
+        (
+            double x    // x must be positive
+        )
+        {
+            if (x <= 0.0)
+            {
+                string msg = string.Format("Invalid input argument {0}. Argument must be positive.", x);
+                throw new ArgumentOutOfRangeException(msg);
+            }
+
+            if (x < 12.0)
+            {
+                return Math.Log(Math.Abs(Gamma(x)));
+            }
+
+            // Abramowitz and Stegun 6.1.41
+            // Asymptotic series should be good to at least 11 or 12 figures
+            // For error analysis, see Whittiker and Watson
+            // A Course in Modern Analysis (1927), page 252
+
+            double[] c =
+            {
+                 1.0/12.0,
+                -1.0/360.0,
+                1.0/1260.0,
+                -1.0/1680.0,
+                1.0/1188.0,
+                -691.0/360360.0,
+                1.0/156.0,
+                -3617.0/122400.0
+            };
+            double z = 1.0 / (x * x);
+            double sum = c[7];
+            for (int i = 6; i >= 0; i--)
+            {
+                sum *= z;
+                sum += c[i];
+            }
+            double series = sum / x;
+
+            double halfLogTwoPi = 0.91893853320467274178032973640562;
+            double logGamma = (x - 0.5) * Math.Log(x) - x + halfLogTwoPi + series;
+            return logGamma;
+        }
+
+        public double t(double x, double df) // t-distribution, using the gamma distribution.
+        {
+            df = Math.Min(df, 100);
+            double first = Gamma((df + 1) / 2) / (Math.Sqrt(df * Math.PI) * Gamma(df / 2));
+            double second = Math.Pow(1 + Math.Pow(x, 2) / df, -(df + 1) / 2);
+            return first * second;
+        }
+
+        double qt(double tail, double df, bool two_tailed = true, double mesh = 0.0001)
+        { // quantile-finding function for the t-distribution.
+
+            double total = 0;
+            double loc = 0;
+            double threshold = 0;
+            if (two_tailed)
+            {
+                threshold = (1 - tail) / 2;
+            }
+            else
+            {
+                total = 0.5;
+                threshold = 1 - tail;
+            }
+            while (total < threshold)
+            {
+                total += mesh * (t(loc, df) + t(loc + mesh, df)) / 2;
+                loc += mesh;
+            }
+            return loc;
+        }
+
+        public Dictionary<string, double> power_pooled(double n, double C, double alpha, double gamma, double tau, double sigma, double[] pi, double[] f)
+        {
+            // Critical t-values
+            double t_alpha = 0;  // critical value for Type I  error
+            double t_gamma = 0;  // critical value for Type II error
+            if(alpha == 0.05 & gamma == 0.80)
+            {
+                t_alpha = 1.962346236089449;
+                t_gamma = 0.84198190461995548;
+            }
+            else
+            {
+                t_alpha = qt(alpha, n * C - 3);
+                t_gamma = qt(1 - gamma, n * C - 3, false);
+            }
+
+
+            // Initialize distribution statistics
+            double[] mu_ind = new double[pi.Length];
+            double[] eta_ind = new double[pi.Length];
+
+            // Calculate distribution statistics
+            for (int i = 0; i < pi.Length; i++)
+            {
+                mu_ind[i] = pi[i] * f[i];
+                eta_ind[i] = Math.Pow(pi[i], 2) * f[i];
+            }
+            double mu = mu_ind.Sum();
+            double eta = eta_ind.Sum(); // eta=E[pi^2] here; eta=eta-mu^2 in the paper.
+            double psi = 0;
+            if (pi[0] == 0)
+            {
+                psi = f[0];
+            }
+
+            double muS = 1 - mu - psi;
+            double etaT = (eta - Math.Pow(mu, 2)) / (1 - psi) - (psi / Math.Pow((1 - psi), 2)) * Math.Pow(mu, 2);
+
+            // Variance multipliers
+            double varN = tau + sigma;
+            double varCo = (n - 1) * tau;
+
+            // In the case of a non-trivial design
+            double MDE_T = Double.PositiveInfinity;
+            double MDE_S = Double.PositiveInfinity;
+            if (mu*psi != 0)
+            {
+                double Var = 1 / (n * C) * (varCo * (1 / (psi * (1 - psi)) + (1 - psi) / Math.Pow(mu, 2) * etaT) + varN * (psi + mu) / (mu * psi));
+                MDE_T = (t_alpha + t_gamma) * Math.Sqrt(Var);
+            }
+
+            if (muS * psi != 0)
+            {
+                double VarS = 1 / (n * C) * (varCo * (1 / (psi * (1 - psi)) + (1 - psi) / Math.Pow(muS, 2) * etaT) + varN * (psi + muS) / (muS * psi));
+                MDE_S = (t_alpha + t_gamma) * Math.Sqrt(VarS);
+            }
+
+            // In the case of a pure control
+            double Var_T = 1 / (n * C) * (varCo * (eta - Math.Pow(mu, 2)) / (Math.Pow(mu, 2) * Math.Pow(1 - mu, 2)) + varN / (mu * (1 - mu)));
+            double MDE_Tonly = (t_alpha + t_gamma) * Math.Sqrt(Var_T);
+
+            // In the case of a pure treatment
+            double Var_S = 1 / (n * C) * (varCo * (eta - Math.Pow(1 - mu, 2)) / (Math.Pow(mu, 2) * Math.Pow(1 - mu, 2)) + varN / (mu * (1 - mu)));
+            double MDE_Sonly = (t_alpha + t_gamma) * Math.Sqrt(Var_S);
+            Dictionary<string, double> output = new Dictionary<string, double> { { "MDE_T", MDE_T }, { "MDE_S", MDE_S }, { "MDE_Tonly", MDE_Tonly }, { "MDE_Sonly", MDE_Sonly } };
+            return output;
+        }
+
+        public Dictionary<string, double> power_slope(double n, double C, double alpha, double gamma, double tau, double sigma, double[] pi, double[] f)
+        {
+
+            // find the outermost indexes for which the slope will be calculated
+            int smallest_interior_index = -1;
+            int largest_interior_index = -1;
+            int smallest_index = -1;
+            int largest_index = -1;
+            double smallest_pi = 1.0;
+            double largest_pi = 0.0;
+
+
+            bool search_smallest = true;
+            bool search_largest = true;
+            for (int i = 0; i < pi.Length; i++)
+            {
+                if (pi[i] < smallest_pi) { smallest_index = i; smallest_pi = pi[i]; }
+                if (pi[i] > largest_pi) { largest_index = i; largest_pi = pi[i]; }
+                if (pi[i] < 1 & search_largest)
+                {
+                    largest_interior_index = i;
+                }
+                else
+                {
+                    search_largest = false;
+                }
+
+            }
+            for (int i = pi.Length - 1; i >= 0; i--)
+            {
+                if (pi[i] > 0 & search_smallest)
+                {
+                    smallest_interior_index = i;
+                }
+                else
+                {
+                    search_smallest = false;
+                }
+            }
+
+            // Critical t-values
+            double t_alpha = 0;  // critical value for Type I  error
+            double t_gamma = 0; // critical value for Type II error
+            if (alpha == 0.05 & gamma == 0.80)
+            {
+                t_alpha = 1.962346236089449;
+                t_gamma = 0.84198190461995548;
+            }
+            else
+            {
+                t_alpha = qt(alpha, n * C - 3);
+                t_gamma = qt(1 - gamma, n * C - 3, false);
+            }
+
+            // Initialize distribution statistics
+            double[] mu_ind = new double[pi.Length];
+            double[] p_ind = new double[pi.Length];
+
+            // Calculate distribution statistics
+            for (int i = 0; i < pi.Length; i++)
+            {
+                mu_ind[i] =     pi[i]  * f[i];
+                p_ind[i] = (1 - pi[i]) * f[i];
+            }
+
+            // Variance multipliers
+            double varN = tau + sigma;
+            double varCo = (n - 1) * tau;
+            double MDSE_T = Double.PositiveInfinity;
+            double MDSE_S = Double.PositiveInfinity;
+
+            int j = smallest_interior_index;
+            int k = largest_index;
+            if (mu_ind[j] != 0 & mu_ind[k] != 0)
+            {
+                double Var_T = (varCo * (1 / f[j] + 1 / f[k]) + varN * (1 / mu_ind[j] + 1 / mu_ind[k])) / (n * C);
+                MDSE_T = ((t_alpha + t_gamma) / (pi[k] - pi[j])) * Math.Sqrt(Var_T);
+            }
+            
+            j = smallest_index;
+            k = largest_interior_index;
+            if (p_ind[j] != 0 & p_ind[k] != 0)
+            {
+                double Var_S = (varCo * (1 / f[j] + 1 / f[k]) + varN * (1 / p_ind[j] + 1 / p_ind[k])) / (n * C);
+                MDSE_S = ((t_alpha + t_gamma) / (pi[k] - pi[j])) * Math.Sqrt(Var_S);
+            }
+            Dictionary<string, double> output = new Dictionary<string, double> { { "MDSE_T", MDSE_T }, { "MDSE_S", MDSE_S } };
+            return output;
+        }
+
+        public Dictionary<string, double> power_ind(double n, double C, double alpha, double gamma, double tau, double sigma, double[] pi, double[] f, int saturation_index)
+        {
+            // Critical t-values
+            double t_alpha = 0;  // critical value for Type I  error
+            double t_gamma = 0; // critical value for Type II error
+            if (alpha == 0.05 & gamma == 0.80)
+            {
+                t_alpha = 1.962346236089449;
+                t_gamma = 0.84198190461995548;
+            }
+            else
+            {
+                t_alpha = qt(alpha, n * C - 3);
+                t_gamma = qt(1 - gamma, n * C - 3, false);
+            }
+
+            // Initialize distribution statistics
+            double[] mu_ind = new double[pi.Length];
+            double[]  p_ind = new double[pi.Length];
+
+            // Calculate distribution statistics
+            for (int i = 0; i < pi.Length; i++)
+            {
+                mu_ind[i] =      pi[i]  * f[i];
+                 p_ind[i] = (1 - pi[i]) * f[i];
+            }
+            double psi = 0;
+            if (pi[0] == 0)
+            {
+                psi = f[0];
+            }
+
+
+            // Variance multipliers
+            double varN = tau + sigma;
+            double varCo = (n - 1) * tau;
+            double varC = n * tau + sigma;
+
+
+            // Minimum Detectable Effects
+            double MDE_ind_T = Double.PositiveInfinity;
+            double MDE_ind_S = Double.PositiveInfinity;
+            if (f[saturation_index] > 0 & psi > 0 & mu_ind[saturation_index] > 0)
+            {
+                MDE_ind_T = (t_alpha + t_gamma) * Math.Sqrt(1 / (n * C) * (varCo * (1 / f[saturation_index] + 1 / psi) + varN * (1 / mu_ind[saturation_index] + 1 / psi)));
+            }
+            if (f[saturation_index] > 0 & psi > 0 & p_ind[saturation_index] > 0)
+            {
+                MDE_ind_S = (t_alpha + t_gamma) * Math.Sqrt(1 / (n * C) * (varCo * (1 / f[saturation_index] + 1 / psi) + varN * (1 /  p_ind[saturation_index] + 1 / psi)));
+            }
+
+                
+            Dictionary<string, double> output = new Dictionary<string, double> { { "MDE_ind_T", MDE_ind_T }, { "MDE_ind_S", MDE_ind_S } };
+            return output;
+        }
+
+        public double objective(int n, int C, double alpha, double gamma, double tau, double sigma, double[] pi, double[] f, double[] theta, int saturation_index_T, int saturation_index_S)
+        {
+            double output = 0;
+            if (theta[0] > 0) { output += theta[0] * power_pooled(n, C, alpha, gamma, tau, sigma, pi, f)["MDE_T"]; }
+            if (theta[1] > 0) { output += theta[1] * power_pooled(n, C, alpha, gamma, tau, sigma, pi, f)["MDE_S"]; }
+            if (theta[2] > 0) { output += theta[2] * power_slope(n, C, alpha, gamma, tau, sigma, pi, f)["MDSE_T"]; }
+            if (theta[3] > 0) { output += theta[3] * power_slope(n, C, alpha, gamma, tau, sigma, pi, f)["MDSE_S"]; }
+            if (theta[4] > 0) { output += theta[4] * power_ind(n, C, alpha, gamma, tau, sigma, pi, f, saturation_index_T)["MDE_ind_T"]; }
+            if (theta[5] > 0) { output += theta[5] * power_ind(n, C, alpha, gamma, tau, sigma, pi, f, saturation_index_S)["MDE_ind_S"]; }
+            return output;
+        }
+
+        // END ALL FUNCTIONS
+
+        public Power_Calculator()
+        {
+            InitializeComponent();
+        }
+
+        private void label7_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Power_Calculator_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            if (n_textbox.Text.Equals("")) { n_textbox.Text = n.ToString(); }
+            if (C_textbox.Text.Equals("")) { C_textbox.Text = C.ToString(); }
+            if (alpha_textbox.Text.Equals("")) { alpha_textbox.Text = alpha.ToString(); }
+            if (gamma_textbox.Text.Equals("")) { gamma_textbox.Text = gamma.ToString(); }
+            if (tau_textbox.Text.Equals("")) { tau_textbox.Text = tau.ToString(); }
+
+            n = int.Parse(n_textbox.Text);
+            C = int.Parse(C_textbox.Text);
+            alpha = Double.Parse(alpha_textbox.Text);
+            gamma = Double.Parse(gamma_textbox.Text);
+            tau = Double.Parse(tau_textbox.Text);
+            sigma = 1-tau;
+            sigma_textbox.Text = sigma.ToString();
+
+            int saturation_T = 0;
+            int saturation_S = 0;
+            if (saturation_T_textbox.Text != "") { saturation_T = int.Parse(saturation_T_textbox.Text); }
+            if (saturation_S_textbox.Text != "") { saturation_S = int.Parse(saturation_S_textbox.Text); }
+
+            // xs = [] # optional object to store working values of x.
+            Dictionary<int, double> pi_specs = new Dictionary<int, double> { };
+            Dictionary<int, double> f_specs = new Dictionary<int, double> { };
+            Dictionary<int, double> pi_checks = new Dictionary<int, double> { };
+            Dictionary<int, double> f_checks = new Dictionary<int, double> { };
+
+            // If checked, add to checks.
+            if (Pi1_checkbox.Checked) { pi_checks.Add(0, 0.0); }
+            if (Pi2_checkbox.Checked) { pi_checks.Add(1, 0.0); }
+            if (Pi3_checkbox.Checked) { pi_checks.Add(2, 0.0); }
+            if (Pi4_checkbox.Checked) { pi_checks.Add(3, 0.0); }
+            if (Pi5_checkbox.Checked) { pi_checks.Add(4, 0.0); }
+            if (Pi6_checkbox.Checked) { pi_checks.Add(5, 0.0); }
+            if (Pi7_checkbox.Checked) { pi_checks.Add(6, 0.0); }
+            if (Pi8_checkbox.Checked) { pi_checks.Add(7, 0.0); }
+            if (Pi9_checkbox.Checked) { pi_checks.Add(8, 0.0); }
+            if (Pi10_checkbox.Checked) { pi_checks.Add(9, 0.0); }
+            if (f1_checkbox.Checked) { f_checks.Add(0, 0.0); }
+            if (f2_checkbox.Checked) { f_checks.Add(1, 0.0); }
+            if (f3_checkbox.Checked) { f_checks.Add(2, 0.0); }
+            if (f4_checkbox.Checked) { f_checks.Add(3, 0.0); }
+            if (f5_checkbox.Checked) { f_checks.Add(4, 0.0); }
+            if (f6_checkbox.Checked) { f_checks.Add(5, 0.0); }
+            if (f7_checkbox.Checked) { f_checks.Add(6, 0.0); }
+            if (f8_checkbox.Checked) { f_checks.Add(7, 0.0); }
+            if (f9_checkbox.Checked) { f_checks.Add(8, 0.0); }
+            if (f10_checkbox.Checked) { f_checks.Add(9, 0.0); }
+
+            // Add unchecked specs.
+            if (Pi1_textbox.Text != "" & !Pi1_checkbox.Checked) { pi_specs.Add(0, Double.Parse(Pi1_textbox.Text)); }
+            if (Pi2_textbox.Text != "" & !Pi2_checkbox.Checked) { pi_specs.Add(1, Double.Parse(Pi2_textbox.Text)); }
+            if (Pi3_textbox.Text != "" & !Pi3_checkbox.Checked) { pi_specs.Add(2, Double.Parse(Pi3_textbox.Text)); }
+            if (Pi4_textbox.Text != "" & !Pi4_checkbox.Checked) { pi_specs.Add(3, Double.Parse(Pi4_textbox.Text)); }
+            if (Pi5_textbox.Text != "" & !Pi5_checkbox.Checked) { pi_specs.Add(4, Double.Parse(Pi5_textbox.Text)); }
+            if (Pi6_textbox.Text != "" & !Pi6_checkbox.Checked) { pi_specs.Add(5, Double.Parse(Pi6_textbox.Text)); }
+            if (Pi7_textbox.Text != "" & !Pi7_checkbox.Checked) { pi_specs.Add(6, Double.Parse(Pi7_textbox.Text)); }
+            if (Pi8_textbox.Text != "" & !Pi8_checkbox.Checked) { pi_specs.Add(7, Double.Parse(Pi8_textbox.Text)); }
+            if (Pi9_textbox.Text != "" & !Pi9_checkbox.Checked) { pi_specs.Add(8, Double.Parse(Pi9_textbox.Text)); }
+            if (Pi10_textbox.Text != "" & !Pi10_checkbox.Checked) { pi_specs.Add(9, Double.Parse(Pi10_textbox.Text)); }
+            if (f1_textbox.Text != "" & !f1_checkbox.Checked) { f_specs.Add(0, Double.Parse(f1_textbox.Text)); }
+            if (f2_textbox.Text != "" & !f2_checkbox.Checked) { f_specs.Add(1, Double.Parse(f2_textbox.Text)); }
+            if (f3_textbox.Text != "" & !f3_checkbox.Checked) { f_specs.Add(2, Double.Parse(f3_textbox.Text)); }
+            if (f4_textbox.Text != "" & !f4_checkbox.Checked) { f_specs.Add(3, Double.Parse(f4_textbox.Text)); }
+            if (f5_textbox.Text != "" & !f5_checkbox.Checked) { f_specs.Add(4, Double.Parse(f5_textbox.Text)); }
+            if (f6_textbox.Text != "" & !f6_checkbox.Checked) { f_specs.Add(5, Double.Parse(f6_textbox.Text)); }
+            if (f7_textbox.Text != "" & !f7_checkbox.Checked) { f_specs.Add(6, Double.Parse(f7_textbox.Text)); }
+            if (f8_textbox.Text != "" & !f8_checkbox.Checked) { f_specs.Add(7, Double.Parse(f8_textbox.Text)); }
+            if (f9_textbox.Text != "" & !f9_checkbox.Checked) { f_specs.Add(8, Double.Parse(f9_textbox.Text)); }
+            if (f10_textbox.Text != "" & !f10_checkbox.Checked) { f_specs.Add(9, Double.Parse(f10_textbox.Text)); }
+
+            // if blank and its pair has activity, check it.
+            if ((Pi1_checkbox.Checked | Pi1_textbox.Text != "") & f1_textbox.Text == "" & !f1_checkbox.Checked) { f_checks.Add(0, 0.0); f1_checkbox.Checked = true; }
+            if ((Pi2_checkbox.Checked | Pi2_textbox.Text != "") & f2_textbox.Text == "" & !f2_checkbox.Checked) { f_checks.Add(1, 0.0); f2_checkbox.Checked = true; }
+            if ((Pi3_checkbox.Checked | Pi3_textbox.Text != "") & f3_textbox.Text == "" & !f3_checkbox.Checked) { f_checks.Add(2, 0.0); f3_checkbox.Checked = true; }
+            if ((Pi4_checkbox.Checked | Pi4_textbox.Text != "") & f4_textbox.Text == "" & !f4_checkbox.Checked) { f_checks.Add(3, 0.0); f4_checkbox.Checked = true; }
+            if ((Pi5_checkbox.Checked | Pi5_textbox.Text != "") & f5_textbox.Text == "" & !f5_checkbox.Checked) { f_checks.Add(4, 0.0); f5_checkbox.Checked = true; }
+            if ((Pi6_checkbox.Checked | Pi6_textbox.Text != "") & f6_textbox.Text == "" & !f6_checkbox.Checked) { f_checks.Add(5, 0.0); f6_checkbox.Checked = true; }
+            if ((Pi7_checkbox.Checked | Pi7_textbox.Text != "") & f7_textbox.Text == "" & !f7_checkbox.Checked) { f_checks.Add(6, 0.0); f7_checkbox.Checked = true; }
+            if ((Pi8_checkbox.Checked | Pi8_textbox.Text != "") & f8_textbox.Text == "" & !f8_checkbox.Checked) { f_checks.Add(7, 0.0); f8_checkbox.Checked = true; }
+            if ((Pi9_checkbox.Checked | Pi9_textbox.Text != "") & f9_textbox.Text == "" & !f9_checkbox.Checked) { f_checks.Add(8, 0.0); f8_checkbox.Checked = true; }
+            if ((Pi10_checkbox.Checked | Pi10_textbox.Text != "") & f10_textbox.Text == "" & !f10_checkbox.Checked) { f_checks.Add(9, 0.0); f9_checkbox.Checked = true; }
+            if ((f1_checkbox.Checked | f1_textbox.Text != "") & Pi1_textbox.Text == "" & !Pi1_checkbox.Checked) { pi_checks.Add(0, 0.0); Pi1_checkbox.Checked = true; }
+            if ((f2_checkbox.Checked | f2_textbox.Text != "") & Pi2_textbox.Text == "" & !Pi2_checkbox.Checked) { pi_checks.Add(1, 0.0); Pi2_checkbox.Checked = true; }
+            if ((f3_checkbox.Checked | f3_textbox.Text != "") & Pi3_textbox.Text == "" & !Pi3_checkbox.Checked) { pi_checks.Add(2, 0.0); Pi3_checkbox.Checked = true; }
+            if ((f4_checkbox.Checked | f4_textbox.Text != "") & Pi4_textbox.Text == "" & !Pi4_checkbox.Checked) { pi_checks.Add(3, 0.0); Pi4_checkbox.Checked = true; }
+            if ((f5_checkbox.Checked | f5_textbox.Text != "") & Pi5_textbox.Text == "" & !Pi5_checkbox.Checked) { pi_checks.Add(4, 0.0); Pi5_checkbox.Checked = true; }
+            if ((f6_checkbox.Checked | f6_textbox.Text != "") & Pi6_textbox.Text == "" & !Pi6_checkbox.Checked) { pi_checks.Add(5, 0.0); Pi6_checkbox.Checked = true; }
+            if ((f7_checkbox.Checked | f7_textbox.Text != "") & Pi7_textbox.Text == "" & !Pi7_checkbox.Checked) { pi_checks.Add(6, 0.0); Pi7_checkbox.Checked = true; }
+            if ((f8_checkbox.Checked | f8_textbox.Text != "") & Pi8_textbox.Text == "" & !Pi8_checkbox.Checked) { pi_checks.Add(7, 0.0); Pi8_checkbox.Checked = true; }
+            if ((f9_checkbox.Checked | f9_textbox.Text != "") & Pi9_textbox.Text == "" & !Pi9_checkbox.Checked) { pi_checks.Add(8, 0.0); Pi9_checkbox.Checked = true; }
+            if ((f10_checkbox.Checked | f10_textbox.Text != "") & Pi10_textbox.Text == "" & !Pi10_checkbox.Checked) { pi_checks.Add(9, 0.0); Pi10_checkbox.Checked = true; }
+
+            // add to both pi and f if f does not add to 1, either for optimization reasons or misspecification
+            double f_specs_total = 0;
+            if (f_specs.Count > 0)
+            {
+                f_specs_total += f_specs.Values.Sum();
+                if (f_specs_total < .99 & f_checks.Count() == 0)
+                {
+                    f_checks.Add(f_specs.Keys.Max() + 1, 0.0);
+                    pi_checks.Add(pi_specs.Keys.Max() + 1, 0.0);
+                }
+            }
+
+
+
+            // initialize values
+            if (f_checks.Count > 0)
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    if (f_checks.ContainsKey(i))
+                    {
+                        f_checks[i] = (double)i / 10 / ((double)f_checks.Count()) * (1 - f_specs_total);
+                    }
+                }
+            }
+            if (pi_checks.Count > 0)
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    if (pi_checks.ContainsKey(i))
+                    {
+                        pi_checks[i] = (double)i / 10 + 0.05;
+                    }
+                }
+            }
+
+            List<int> total_keys_list = new List<int> { };
+            for (int i = 0; i < 10; i++)
+            {
+                if (f_specs.ContainsKey(i) | f_checks.ContainsKey(i))
+                {
+                    total_keys_list.Add(i);
+                }
+            }
+            int[] total_keys = total_keys_list.ToArray();
+            int l = total_keys.Length;
+            if (saturation_T_textbox.Text == "") { saturation_T = total_keys.Max(); }
+            if (saturation_S_textbox.Text == "") { saturation_S = total_keys.Max(); }
+
+            double[] theta = new double[6];
+            for (int i = 0; i < 6; i++)
+            {
+                theta[i] = 0.0;
+            }
+
+            if (MDE_T_input.Text != "") { theta[0] = Double.Parse(MDE_T_input.Text); }
+            if (MDE_S_input.Text != "") { theta[1] = Double.Parse(MDE_S_input.Text); }
+            if (MDSE_T_input.Text != "") { theta[2] = Double.Parse(MDSE_T_input.Text); }
+            if (MDSE_S_input.Text != "") { theta[3] = Double.Parse(MDSE_S_input.Text); }
+            if (MDE_ind_T_input.Text != "") { theta[4] = Double.Parse(MDE_ind_T_input.Text); }
+            if (MDE_ind_S_input.Text != "") { theta[5] = Double.Parse(MDE_ind_S_input.Text); }
+
+            // Find whether it makes sense to calculate MDSE_S and MDSE_T.  If not, throw error?  Also, ind?
+            //  You need to think harder about this.  Once you have a Pi, you can consider whether a suitable MDSE can be calculated.
+
+            double[] pi_temp = new double[l];
+            double[] f_temp = new double[l];
+            double[] pi_step = new double[l];
+            double[] f_step = new double[l];
+            double[] pi = new double[l];
+            double[] f = new double[l];
+            int max_steps = 100000;
+            double partial_sum = 0.0;
+            double obj      = Double.PositiveInfinity;
+            double obj_temp = Double.PositiveInfinity;
+            double obj_step = Double.PositiveInfinity;
+            double tol = 1E-9;
+            double delta = Math.PI/10;
+            int steps = 0;
+            for (int L = 0; L < l; L++)
+            {
+                if ( pi_specs.ContainsKey(total_keys[L])) { pi[total_keys[L]] =  pi_specs[total_keys[L]]; }
+                if (pi_checks.ContainsKey(total_keys[L])) { pi[total_keys[L]] = pi_checks[total_keys[L]]; }
+                if (  f_specs.ContainsKey(total_keys[L])) {  f[total_keys[L]] =   f_specs[total_keys[L]]; }
+                if ( f_checks.ContainsKey(total_keys[L])) {  f[total_keys[L]] =  f_checks[total_keys[L]]; }
+            }
+            if(f_checks.Count() > 0) // make sure the first input is valid.
+            {
+                partial_sum = f.Sum() - f[f_checks.Keys.Max()];
+                f[f_checks.Keys.Max()] = 1- partial_sum;
+            }
+            
+            if (f_checks.Count() + pi_checks.Count() > 1)
+            {
+                while (delta > tol & steps < max_steps)
+                {
+                    obj = objective(n, C, alpha, gamma, tau, sigma, pi, f, theta, saturation_T, saturation_S);
+                    steps = steps + 1;
+                    obj_step = obj;
+                    Array.Copy(pi, pi_step, l);
+                    Array.Copy( f,  f_step, l);
+                    for (int L = 0; L < l; L++)
+                    {
+                        if (pi_checks.ContainsKey(L))
+                        {
+                            Array.Copy(pi, pi_temp, l);
+                            if (pi_temp[L] + delta <= 1) {
+                                pi_temp[L] = pi_temp[L] + delta;
+                                obj_temp = objective(n, C, alpha, gamma, tau, sigma, pi_temp, f_step, theta, saturation_T, saturation_S);
+                                if (obj_temp < obj_step)
+                                {
+                                    Array.Copy(pi_temp, pi_step, l);
+                                    obj_step = obj_temp;
+                                }
+                            }
+                            Array.Copy(pi, pi_temp, l);
+                            if (pi_temp[L] - delta >= 0)  
+                            {
+                                pi_temp[L] = pi_temp[L] - delta;
+                                obj_temp = objective(n, C, alpha, gamma, tau, sigma, pi_temp, f_step, theta, saturation_T, saturation_S);
+                                if (obj_temp < obj_step)
+                                {
+                                    Array.Copy(pi_temp, pi_step, l);
+                                    obj_step = obj_temp;
+                                }
+                            }
+                        }
+                        if (f_checks.ContainsKey(L))
+                        {
+                            if(L != f_checks.Keys.Max())
+                            {
+                                Array.Copy(f, f_temp, l);
+                                partial_sum = f_temp.Sum() - f_temp[f_checks.Keys.Max()];
+                                if (f_temp[L] + delta <= 1 & partial_sum + delta <= 1)
+                                {
+                                    f_temp[L] = f_temp[L] + delta;
+                                    f_temp[f_checks.Keys.Max()] = 1 - (partial_sum + delta);
+                                    obj_temp = objective(n, C, alpha, gamma, tau, sigma, pi_step, f_temp, theta, saturation_T, saturation_S);
+                                    if (obj_temp < obj_step)
+                                    {
+                                        Array.Copy(f_temp, f_step, l);
+                                        obj_step = obj_temp;
+                                    }
+                                }
+                                Array.Copy(f, f_temp, l);
+                                partial_sum = f_temp.Sum() - f_temp[f_checks.Keys.Max()];
+                                if (f_temp[L] - delta >= 0 & partial_sum - delta >= 0)
+                                {
+                                    f_temp[L] = f_temp[L] - delta;
+                                    f_temp[f_checks.Keys.Max()] = 1 - (partial_sum - delta);
+                                    obj_temp = objective(n, C, alpha, gamma, tau, sigma, pi_step, f_temp, theta, saturation_T, saturation_S);
+                                    if (obj_temp < obj_step)
+                                    {
+                                        Array.Copy(f_temp, f_step, l);
+                                        obj_step = obj_temp;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if(obj_step < obj)
+                    {
+                        Array.Copy(pi_step, pi, l);
+                        Array.Copy( f_step,  f, l);
+                    }
+                    else
+                    {
+                        delta /= 2;
+                    }
+                }
+            }
+            /////////////////////////////////////////////////////////////////////
+            // Print answers where they belong.
+
+            MDE_T_textbox.Clear();
+            MDE_S_textbox.Clear();
+            MDSE_T_textbox.Clear();
+            MDSE_S_textbox.Clear();
+            MDE_ind_T_textbox.Clear();
+            MDE_ind_S_textbox.Clear();
+
+
+            if (theta[0] > 0 | theta[1] > 0 | (pi_checks.Count() + f_checks.Count() == 0))
+            {
+                Dictionary<string, double> X = power_pooled(n, C, alpha, gamma, tau, sigma, pi, f);
+                if(Double.IsInfinity(X["MDE_T"]) & Double.IsInfinity(X["MDE_S"]))
+                {
+                    MDE_S_textbox.Text = "None";
+                    MDE_T_textbox.Text = "None";
+                }
+                if (Double.IsInfinity(X["MDE_S"]))
+                {
+                    MDE_T_textbox.Text = Math.Round(X["MDE_Tonly"], 5).ToString();
+                    MDE_S_textbox.Text = "None";
+                }
+                else if (Double.IsInfinity(X["MDE_T"]))
+                {
+                    MDE_T_textbox.Text = "None";
+                    MDE_S_textbox.Text = Math.Round(X["MDE_Sonly"], 5).ToString();
+                }
+                else
+                {
+                    MDE_T_textbox.Text = Math.Round(X["MDE_T"], 5).ToString();
+                    MDE_S_textbox.Text = Math.Round(X["MDE_S"], 5).ToString();
+                }
+            }
+
+            if (theta[2] > 0 | theta[3] > 0 | (pi_checks.Count()+ f_checks.Count() == 0))
+            {
+                Dictionary<string, double> Y = power_slope(n, C, alpha, gamma, tau, sigma, pi, f);
+                MDSE_T_textbox.Text = Math.Round(Y["MDSE_T"], 5).ToString();
+                MDSE_S_textbox.Text = Math.Round(Y["MDSE_S"], 5).ToString(); //  this will need some love.
+            }
+            if (theta[4] > 0 | (pi_checks.Count() + f_checks.Count() == 0))
+            {
+                MDE_ind_T_textbox.Text = Math.Round(power_ind(n, C, alpha, gamma, tau, sigma, pi, f, saturation_T)["MDE_ind_T"], 5).ToString();
+                saturation_T_textbox.Text = saturation_T.ToString();
+            }
+            if (theta[5] > 0 | (pi_checks.Count() + f_checks.Count() == 0))
+            {
+                MDE_ind_S_textbox.Text = Math.Round(power_ind(n, C, alpha, gamma, tau, sigma, pi, f, saturation_S)["MDE_ind_S"], 5).ToString();
+                saturation_S_textbox.Text = saturation_S.ToString();
+            }
+
+            if (pi_checks.ContainsKey(0)) { Pi1_textbox.Text =  Math.Round(pi[total_keys[0]], 4).ToString(); }
+            if (pi_checks.ContainsKey(1)) { Pi2_textbox.Text =  Math.Round(pi[total_keys[1]], 4).ToString(); }
+            if (pi_checks.ContainsKey(2)) { Pi3_textbox.Text =  Math.Round(pi[total_keys[2]], 4).ToString(); }
+            if (pi_checks.ContainsKey(3)) { Pi4_textbox.Text =  Math.Round(pi[total_keys[3]], 4).ToString(); }
+            if (pi_checks.ContainsKey(4)) { Pi5_textbox.Text =  Math.Round(pi[total_keys[4]], 4).ToString(); }
+            if (pi_checks.ContainsKey(5)) { Pi6_textbox.Text =  Math.Round(pi[total_keys[5]], 4).ToString(); }
+            if (pi_checks.ContainsKey(6)) { Pi7_textbox.Text =  Math.Round(pi[total_keys[6]], 4).ToString(); }
+            if (pi_checks.ContainsKey(7)) { Pi8_textbox.Text =  Math.Round(pi[total_keys[7]], 4).ToString(); }
+            if (pi_checks.ContainsKey(8)) { Pi9_textbox.Text =  Math.Round(pi[total_keys[8]], 4).ToString(); }
+            if (pi_checks.ContainsKey(9)) { Pi10_textbox.Text = Math.Round(pi[total_keys[9]], 4).ToString(); }
+
+            if (f_checks.ContainsKey(0)) {  f1_textbox.Text = Math.Round(f[total_keys[0]], 4).ToString(); }
+            if (f_checks.ContainsKey(1)) {  f2_textbox.Text = Math.Round(f[total_keys[1]], 4).ToString(); }
+            if (f_checks.ContainsKey(2)) {  f3_textbox.Text = Math.Round(f[total_keys[2]], 4).ToString(); }
+            if (f_checks.ContainsKey(3)) {  f4_textbox.Text = Math.Round(f[total_keys[3]], 4).ToString(); }
+            if (f_checks.ContainsKey(4)) {  f5_textbox.Text = Math.Round(f[total_keys[4]], 4).ToString(); }
+            if (f_checks.ContainsKey(5)) {  f6_textbox.Text = Math.Round(f[total_keys[5]], 4).ToString(); }
+            if (f_checks.ContainsKey(6)) {  f7_textbox.Text = Math.Round(f[total_keys[6]], 4).ToString(); }
+            if (f_checks.ContainsKey(7)) {  f8_textbox.Text = Math.Round(f[total_keys[7]], 4).ToString(); }
+            if (f_checks.ContainsKey(8)) {  f9_textbox.Text = Math.Round(f[total_keys[8]], 4).ToString(); }
+            if (f_checks.ContainsKey(9)) { f10_textbox.Text = Math.Round(f[total_keys[9]], 4).ToString(); }
+            //double t_alpha = 1.962346236089449;  // critical value for Type I  error
+            //double t_gamma = 0.84198190461995548;// critical value for Type II error
+            //t_alpha = qt(alpha, n * C - 3);
+            //t_gamma = qt(1 - gamma, n * C - 3, false);
+            //f[10] = 0;
+        }
+        
+        private void Copyright_button_Click(object sender, EventArgs e)
+        {
+            string message = "Power Calculator for Partially Saturated Cluster Randomized Trials\n\t\t    Written by Patrick Staples\n__________________________________________________________________________________\n\nCopyright 2016 The Regents of the University of California.\nAll Rights Reserved.\n\nPermission to copy, modify and distribute any part of this Optimal Design for Spillover Experiments for any purpose, without fee, and without a written agreement is hereby granted, provided that the above copyright notice, this paragraph and the following two paragraphs appear in all copies.\n\nIN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, ARISING OUT OF THE USE OF THIS  Optimal Design for Spillover Experiments, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\nTHE Optimal Design for Spillover Experiments PROVIDED HEREIN IS ON AN ``AS IS'' BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATION TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.THE UNIVERSITY OF CALIFORNIA MAKES NO REPRESENTATIONS AND EXTENDS NO WARRANTIES OF ANY KIND, EITHER IMPLIED OR EXPRESS, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR THAT THE USE OF THE  Optimal Design for Spillover Experiments WILL NOT INFRINGE ANY PATENT, TRADEMARK OR OTHER RIGHTS.\n\nSponsorship: Developed under support from USAID; the Development Impact Lab at the University of California, Berkeley; and the Policy Design and Evaluation Lab at the University of California, San Diego.";
+            System.Windows.Forms.MessageBox.Show(message);
+        }
+
+        private void MDE_T_combobox_SelectedIndexChanged(object sender, EventArgs e){}
+    }
+}
+;
